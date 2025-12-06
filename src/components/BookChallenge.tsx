@@ -61,13 +61,19 @@ const BookChallenge = () => {
       await analyticsService.registerDownload(parseInt(weeklyBook.id));
 
       // Descargar PDF (preferencia) o EPUB si no hay PDF
-      const downloadUrl = weeklyBook.pdfUrl || weeklyBook.epubUrl;
+      let downloadUrl = weeklyBook.pdfUrl || weeklyBook.epubUrl; // Usamos 'let' para poder modificarlo
       const fileExtension = weeklyBook.pdfUrl ? 'pdf' : 'epub';
 
       if (!downloadUrl) {
         toast.error('No hay archivo disponible para descargar');
         setIsDownloading(false);
         return;
+      }
+
+      // 🔒 PARCHE DE SEGURIDAD PARA IPHONE/IOS
+      // Forzamos HTTPS para evitar bloqueo de "Mixed Content"
+      if (downloadUrl.startsWith('http://')) {
+        downloadUrl = downloadUrl.replace('http://', 'https://');
       }
 
       // Crear link de descarga

@@ -65,8 +65,15 @@ const BookDetail = () => {
       await analyticsService.registerDownload(parseInt(book.id));
 
       // Descargar PDF (preferencia) o EPUB
-      const downloadUrl = book.pdfUrl || book.epubUrl;
+      // 🟢 CORRECCIÓN: Usamos 'let' para poder modificar la URL si viene insegura
+      let downloadUrl = book.pdfUrl || book.epubUrl;
       const fileExtension = book.pdfUrl ? 'pdf' : 'epub';
+
+      // 🔒 PARCHE DE SEGURIDAD (HTTPS):
+      // Si la URL viene como http://, la forzamos a https:// para que iPhone no la bloquee
+      if (downloadUrl && downloadUrl.startsWith('http://')) {
+        downloadUrl = downloadUrl.replace('http://', 'https://');
+      }
 
       if (!downloadUrl) {
         toast.error('No hay archivo disponible para descargar');
@@ -256,6 +263,5 @@ const BookDetail = () => {
     </div>
   );
 };
-
 
 export default BookDetail;

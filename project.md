@@ -1,28 +1,53 @@
 ## File: src/components/ProgressModal.tsx
 
 ```
-import { useState } from "react";
+// src/components/ProgressModal.tsx
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BookOpen } from "lucide-react";
-import { useUserStore } from "@/hooks/useUserStore";
+import { analyticsService } from "@/services/api";
 import { toast } from "sonner";
 
 interface ProgressModalProps {
   bookId: string;
   totalPages: number;
   trigger?: React.ReactNode;
+  onUpdate?: () => void;
 }
 
-const ProgressModal = ({ bookId, totalPages, trigger }: ProgressModalProps) => {
-  const { getBookProgress, updateProgress } = useUserStore();
-  const currentProgress = getBookProgress(bookId);
-  const [currentPage, setCurrentPage] = useState(currentProgress?.currentPage || 0);
+const ProgressModal = ({ bookId, totalPages, trigger, onUpdate }: ProgressModalProps) => {
+  const [currentPage, setCurrentPage] = useState(0);
   const [open, setOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSubmit = () => {
+  // Cargar progreso actual al abrir
+  useEffect(() => {
+    if (open) {
+      loadCurrentProgress();
+    }
+  }, [open, bookId]);
+
+  const loadCurrentProgress = async () => {
+    setIsLoading(true);
+    try {
+      const library = await analyticsService.getMyLibrary();
+      const bookProgress = library.find(p => p.libro === parseInt(bookId));
+      
+      if (bookProgress) {
+        setCurrentPage(bookProgress.paginas_leidas);
+      }
+    } catch (error) {
+      console.error('Error loading progress:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSubmit = async () => {
     if (currentPage < 0) {
       toast.error("La página no puede ser negativa");
       return;
@@ -32,9 +57,23 @@ const ProgressModal = ({ bookId, totalPages, trigger }: ProgressModalProps) => {
       return;
     }
     
-    updateProgress(bookId, currentPage, totalPages);
-    toast.success(`¡Progreso actualizado! Página ${currentPage} de ${totalPages}`);
-    setOpen(false);
+    setIsSaving(true);
+
+    try {
+      await analyticsService.updateProgress(parseInt(bookId), currentPage);
+      toast.success(`¡Progreso actualizado! Página ${currentPage} de ${totalPages}`);
+      setOpen(false);
+      
+      // Notificar al componente padre
+      if (onUpdate) {
+        onUpdate();
+      }
+    } catch (error: any) {
+      console.error('Error updating progress:', error);
+      toast.error(error.message || 'Error al actualizar el progreso');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const percentage = totalPages > 0 ? Math.round((currentPage / totalPages) * 100) : 0;
@@ -54,47 +93,55 @@ const ProgressModal = ({ bookId, totalPages, trigger }: ProgressModalProps) => {
           <DialogTitle className="text-xl font-bold">Actualizar Progreso de Lectura</DialogTitle>
         </DialogHeader>
         
-        <div className="space-y-6 py-4">
-          <div className="space-y-3">
-            <Label htmlFor="currentPage" className="text-base font-medium">
-              ¿En qué página vas?
-            </Label>
-            <div className="flex items-center gap-3">
-              <Input
-                id="currentPage"
-                type="number"
-                min={0}
-                max={totalPages}
-                value={currentPage}
-                onChange={(e) => setCurrentPage(Math.max(0, parseInt(e.target.value) || 0))}
-                className="text-lg font-semibold text-center bg-muted/50 border-border"
-              />
-              <span className="text-muted-foreground whitespace-nowrap">
-                / {totalPages} páginas
-              </span>
-            </div>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
+        ) : (
+          <div className="space-y-6 py-4">
+            <div className="space-y-3">
+              <Label htmlFor="currentPage" className="text-base font-medium">
+                ¿En qué página vas?
+              </Label>
+              <div className="flex items-center gap-3">
+                <Input
+                  id="currentPage"
+                  type="number"
+                  min={0}
+                  max={totalPages}
+                  value={currentPage}
+                  onChange={(e) => setCurrentPage(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="text-lg font-semibold text-center bg-muted/50 border-border"
+                  disabled={isSaving}
+                />
+                <span className="text-muted-foreground whitespace-nowrap">
+                  / {totalPages} páginas
+                </span>
+              </div>
+            </div>
 
-          <div className="p-4 bg-muted/30 rounded-lg border border-border">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Progreso calculado:</span>
-              <span className="text-2xl font-bold text-gold">{percentage}%</span>
+            <div className="p-4 bg-muted/30 rounded-lg border border-border">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Progreso calculado:</span>
+                <span className="text-2xl font-bold text-gold">{percentage}%</span>
+              </div>
+              <div className="mt-3 w-full bg-muted rounded-full h-2">
+                <div 
+                  className="bg-gradient-to-r from-primary to-gold h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${percentage}%` }}
+                />
+              </div>
             </div>
-            <div className="mt-3 w-full bg-muted rounded-full h-2">
-              <div 
-                className="bg-gradient-to-r from-primary to-gold h-2 rounded-full transition-all duration-300"
-                style={{ width: `${percentage}%` }}
-              />
-            </div>
+
+            <Button 
+              onClick={handleSubmit} 
+              className="w-full py-5 bg-primary hover:bg-primary/90 font-semibold"
+              disabled={isSaving}
+            >
+              {isSaving ? 'Guardando...' : 'Guardar Progreso'}
+            </Button>
           </div>
-
-          <Button 
-            onClick={handleSubmit} 
-            className="w-full py-5 bg-primary hover:bg-primary/90 font-semibold"
-          >
-            Guardar Progreso
-          </Button>
-        </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -197,20 +244,84 @@ export const ContinueReading = ({ book }: ContinueReadingProps) => {
 ## File: src/components/ProgressCard.tsx
 
 ```
+// src/components/ProgressCard.tsx
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Trophy, TrendingUp } from "lucide-react";
-import { useUserStore } from "@/hooks/useUserStore";
+import { useAuth } from "@/contexts/AuthContext";
+import { analyticsService } from "@/services/api";
 import ProgressModal from "./ProgressModal";
 
 const ProgressCard = () => {
-  const { userData, getBookProgress } = useUserStore();
-  const bookId = "principles";
-  const totalPages = 592;
-  
-  const progress = getBookProgress(bookId);
-  const currentPage = progress?.currentPage || 0;
-  const progressPercentage = totalPages > 0 ? Math.round((currentPage / totalPages) * 100) : 0;
-  const currentPoints = userData.downloadedBooks.length * 100;
+  const { user, isAuthenticated } = useAuth();
+  const [progress, setProgress] = useState({
+    currentPage: 0,
+    totalPages: 592,
+    percentage: 0,
+    bookId: 0,
+  });
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadProgress();
+    } else {
+      setIsLoading(false);
+    }
+  }, [isAuthenticated]);
+
+  const loadProgress = async () => {
+    try {
+      const library = await analyticsService.getMyLibrary();
+      
+      // Obtener el libro con mayor progreso o el primero
+      const bookWithProgress = library.find(b => b.porcentaje_avance > 0) || library[0];
+      
+      if (bookWithProgress) {
+        setProgress({
+          currentPage: bookWithProgress.paginas_leidas,
+          totalPages: bookWithProgress.libro_detalle.total_paginas,
+          percentage: Math.round(bookWithProgress.porcentaje_avance),
+          bookId: bookWithProgress.libro,
+        });
+      }
+    } catch (error) {
+      console.error('Error loading progress:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleProgressUpdate = async () => {
+    // Recargar progreso después de actualizar
+    await loadProgress();
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <Card className="p-8 bg-gradient-to-br from-card to-card/50 border-border">
+        <div className="text-center space-y-4">
+          <TrendingUp className="w-12 h-12 text-muted-foreground mx-auto" />
+          <div>
+            <h3 className="text-xl font-bold mb-2">Inicia Sesión</h3>
+            <p className="text-muted-foreground text-sm">
+              Inicia sesión para ver tu progreso y estadísticas
+            </p>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <Card className="p-8 bg-gradient-to-br from-card to-card/50 border-border">
+        <div className="flex items-center justify-center h-64">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card className="p-8 bg-gradient-to-br from-card to-card/50 border-border space-y-6">
@@ -223,6 +334,7 @@ const ProgressCard = () => {
       </div>
 
       <div className="space-y-6">
+        {/* Circular Progress */}
         <div className="flex flex-col items-center justify-center py-8">
           <div className="relative w-48 h-48">
             <svg className="w-full h-full transform -rotate-90">
@@ -242,14 +354,14 @@ const ProgressCard = () => {
                 strokeWidth="12"
                 fill="none"
                 strokeDasharray={`${2 * Math.PI * 88}`}
-                strokeDashoffset={`${2 * Math.PI * 88 * (1 - progressPercentage / 100)}`}
+                strokeDashoffset={`${2 * Math.PI * 88 * (1 - progress.percentage / 100)}`}
                 strokeLinecap="round"
                 className="transition-all duration-1000 ease-out"
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <div className="text-5xl font-bold text-gradient-elite">
-                {progressPercentage}%
+                {progress.percentage}%
               </div>
               <div className="text-sm text-muted-foreground mt-1">
                 Completado
@@ -259,24 +371,32 @@ const ProgressCard = () => {
           
           {/* Page indicator */}
           <div className="mt-4 text-sm text-muted-foreground">
-            Página <span className="text-foreground font-medium">{currentPage}</span> de <span className="text-foreground font-medium">{totalPages}</span>
+            Página <span className="text-foreground font-medium">{progress.currentPage}</span> de <span className="text-foreground font-medium">{progress.totalPages}</span>
           </div>
           
           {/* Update progress button */}
-          <div className="mt-4">
-            <ProgressModal bookId={bookId} totalPages={totalPages} />
-          </div>
+          {progress.bookId > 0 && (
+            <div className="mt-4">
+              <ProgressModal 
+                bookId={progress.bookId.toString()} 
+                totalPages={progress.totalPages}
+                onUpdate={handleProgressUpdate}
+              />
+            </div>
+          )}
         </div>
 
+        {/* Stats */}
         <div className="space-y-4">
           <div className="p-4 bg-muted/30 rounded-lg border border-border">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-muted-foreground">Puntos Totales</span>
               <Trophy className="w-4 h-4 text-elite" />
             </div>
-            <div className="text-3xl font-bold">{currentPoints}</div>
+            <div className="text-3xl font-bold">{user?.puntos_totales || 0}</div>
           </div>
 
+          {/* Rank System */}
           <div className="space-y-3">
             <div className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
               Sistema de Rangos
@@ -287,20 +407,8 @@ const ProgressCard = () => {
                   <Trophy className="w-6 h-6 text-primary" />
                 </div>
                 <div>
-                  <div className="font-semibold text-lg">Pensador</div>
+                  <div className="font-semibold text-lg">{user?.rango_actual || 'Iniciado'}</div>
                   <div className="text-sm text-muted-foreground">Rango Actual</div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="p-4 bg-muted/20 border border-border rounded-lg opacity-60">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
-                  <Trophy className="w-6 h-6 text-foreground" />
-                </div>
-                <div>
-                  <div className="font-semibold text-lg">Hacedor</div>
-                  <div className="text-sm text-muted-foreground">Próximo Rango</div>
                 </div>
               </div>
             </div>
@@ -311,8 +419,7 @@ const ProgressCard = () => {
   );
 };
 
-export default ProgressCard;
-```
+export default ProgressCard;```
 
 ## File: src/components/ui/textarea.tsx
 
@@ -4516,12 +4623,28 @@ export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider };
 ## File: src/components/Header.tsx
 
 ```
+// src/components/Header.tsx
 import { useNavigate } from "react-router-dom";
-import { User } from "lucide-react";
+import { User, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Header = () => {
   const navigate = useNavigate();
+  const { user, isAuthenticated, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/');
+  };
 
   return (
     <header className="sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border">
@@ -4536,21 +4659,60 @@ const Header = () => {
           </h1>
         </div>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => navigate("/profile")}
-          className="text-foreground hover:text-gold hover:bg-gold/10"
-        >
-          <User className="w-5 h-5" />
-        </Button>
+        {isAuthenticated ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-foreground hover:text-gold hover:bg-gold/10"
+              >
+                <User className="w-5 h-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>
+                <div className="flex flex-col space-y-1">
+                  <p className="text-sm font-medium">{user?.username}</p>
+                  <p className="text-xs text-muted-foreground">{user?.email}</p>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => navigate("/profile")}>
+                <User className="w-4 h-4 mr-2" />
+                Mi Perfil
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleLogout} className="text-destructive">
+                <LogOut className="w-4 h-4 mr-2" />
+                Cerrar Sesión
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate("/login")}
+            >
+              Iniciar Sesión
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => navigate("/register")}
+              className="bg-gold text-gold-foreground hover:bg-gold/90"
+            >
+              Registrarse
+            </Button>
+          </div>
+        )}
       </div>
     </header>
   );
 };
 
-export default Header;
-```
+export default Header;```
 
 ## File: src/components/ReviewForm.tsx
 
@@ -4633,25 +4795,75 @@ export default ReviewForm;
 ## File: src/components/ReviewsSection.tsx
 
 ```
-import { useUserStore } from "@/hooks/useUserStore";
+// src/components/ReviewsSection.tsx
+import { useState, useEffect } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { socialService, type Review } from "@/services/api";
 import ReviewCard from "./ReviewCard";
 import ReviewForm from "./ReviewForm";
 import { MessageSquare } from "lucide-react";
+import { toast } from "sonner";
 
 interface ReviewsSectionProps {
   bookId: string;
 }
 
 const ReviewsSection = ({ bookId }: ReviewsSectionProps) => {
-  const { getBookReviews, addReview } = useUserStore();
-  const reviews = getBookReviews(bookId);
-  
-  const featuredReviews = reviews.filter(r => r.userId !== 'current_user').slice(0, 2);
-  const allReviews = reviews;
+  const { user, isAuthenticated } = useAuth();
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleSubmitReview = (rating: number, comment: string) => {
-    addReview(bookId, rating, comment);
+  useEffect(() => {
+    loadReviews();
+  }, [bookId]);
+
+  const loadReviews = async () => {
+    try {
+      const bookReviews = await socialService.getBookReviews(parseInt(bookId));
+      setReviews(bookReviews);
+    } catch (error) {
+      console.error('Error loading reviews:', error);
+      toast.error('Error al cargar las reseñas');
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  const handleSubmitReview = async (rating: number, comment: string) => {
+    if (!isAuthenticated) {
+      toast.error('Debes iniciar sesión para dejar una reseña');
+      return;
+    }
+
+    try {
+      await socialService.createReview({
+        libro: parseInt(bookId),
+        calificacion: rating,
+        comentario: comment,
+      });
+      
+      toast.success('¡Reseña publicada exitosamente!');
+      
+      // Recargar reseñas
+      await loadReviews();
+    } catch (error: any) {
+      console.error('Error creating review:', error);
+      toast.error(error.message || 'Error al publicar la reseña');
+    }
+  };
+
+  // Separar reseñas destacadas (primeras 2 que no sean del usuario actual)
+  const featuredReviews = reviews
+    .filter(r => r.usuario_nombre !== user?.username)
+    .slice(0, 2);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -4670,26 +4882,38 @@ const ReviewsSection = ({ bookId }: ReviewsSectionProps) => {
         </div>
       )}
 
-      {/* Review Form */}
-      <ReviewForm onSubmit={handleSubmitReview} />
+      {/* Review Form - Solo si está autenticado */}
+      {isAuthenticated ? (
+        <ReviewForm onSubmit={handleSubmitReview} />
+      ) : (
+        <div className="p-6 bg-muted/20 border border-border rounded-lg text-center">
+          <p className="text-muted-foreground">
+            Inicia sesión para dejar tu reseña
+          </p>
+        </div>
+      )}
 
       {/* All Reviews */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <MessageSquare className="w-5 h-5 text-muted-foreground" />
           <h3 className="text-lg font-semibold">
-            Muro de Comentarios ({allReviews.length})
+            Muro de Comentarios ({reviews.length})
           </h3>
         </div>
         
-        {allReviews.length === 0 ? (
+        {reviews.length === 0 ? (
           <p className="text-muted-foreground text-center py-8">
             Sé el primero en compartir tu opinión
           </p>
         ) : (
           <div className="grid gap-3">
-            {allReviews.map((review) => (
-              <ReviewCard key={review.id} review={review} />
+            {reviews.map((review) => (
+              <ReviewCard 
+                key={review.id} 
+                review={review}
+                isCurrentUser={review.usuario_nombre === user?.username}
+              />
             ))}
           </div>
         )}
@@ -4698,40 +4922,125 @@ const ReviewsSection = ({ bookId }: ReviewsSectionProps) => {
   );
 };
 
-export default ReviewsSection;
-```
+export default ReviewsSection;```
 
 ## File: src/components/BookChallenge.tsx
 
 ```
+// src/components/BookChallenge.tsx
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Download, Clock, BookOpen, Award, Sparkles, CheckCircle } from "lucide-react";
-import { useUserStore } from "@/hooks/useUserStore";
+import { Download, Clock, BookOpen, Award, Sparkles, CheckCircle, FileText } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { getWeeklyBook, type Book } from "@/data/books";
+import { analyticsService } from "@/services/api";
 import { toast } from "sonner";
 
 const BookChallenge = () => {
   const navigate = useNavigate();
-  const { registerDownload, hasDownloaded } = useUserStore();
-  
-  const bookId = "principles";
-  const isDownloaded = hasDownloaded(bookId);
+  const { isAuthenticated } = useAuth();
+  const [weeklyBook, setWeeklyBook] = useState<Book | null>(null);
+  const [isDownloaded, setIsDownloaded] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  const handleDownload = () => {
-    // Simulate download
-    const link = document.createElement('a');
-    link.href = "https://react-reader.metabits.no/files/alice.epub";
-    link.download = "Principios.epub";
-    link.target = '_blank';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  useEffect(() => {
+    loadWeeklyBook();
+  }, []);
 
-    // Register download
-    registerDownload(bookId);
-    toast.success("¡Descarga iniciada! El libro se añadió a tu biblioteca.");
+  const loadWeeklyBook = async () => {
+    try {
+      const book = await getWeeklyBook();
+      if (book) {
+        setWeeklyBook(book);
+        
+        if (isAuthenticated) {
+          try {
+            const library = await analyticsService.getMyLibrary();
+            const hasBook = library.some(p => p.libro === parseInt(book.id));
+            setIsDownloaded(hasBook);
+          } catch (error) {
+            console.error('Error checking download status:', error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading weekly book:', error);
+      toast.error('Error al cargar el libro de la semana');
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  const handleDownload = async () => {
+    if (!weeklyBook) return;
+
+    if (!isAuthenticated) {
+      toast.error('Debes iniciar sesión para descargar libros');
+      navigate('/login');
+      return;
+    }
+
+    setIsDownloading(true);
+
+    try {
+      // Registrar descarga en el backend
+      await analyticsService.registerDownload(parseInt(weeklyBook.id));
+
+      // Descargar PDF (preferencia) o EPUB si no hay PDF
+      const downloadUrl = weeklyBook.pdfUrl || weeklyBook.epubUrl;
+      const fileExtension = weeklyBook.pdfUrl ? 'pdf' : 'epub';
+
+      if (!downloadUrl) {
+        toast.error('No hay archivo disponible para descargar');
+        setIsDownloading(false);
+        return;
+      }
+
+      // Crear link de descarga
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `${weeklyBook.title}.${fileExtension}`;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setIsDownloaded(true);
+      toast.success(`¡Descarga iniciada! Libro en formato ${fileExtension.toUpperCase()}`);
+    } catch (error: any) {
+      console.error('Download error:', error);
+      toast.error(error.message || 'Error al descargar el libro');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <Card className="p-8 bg-gradient-to-br from-card to-card/50 border-border">
+        <div className="flex items-center justify-center h-64">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      </Card>
+    );
+  }
+
+  if (!weeklyBook) {
+    return (
+      <Card className="p-8 bg-gradient-to-br from-card to-card/50 border-border">
+        <p className="text-center text-muted-foreground">
+          No hay libro de la semana disponible
+        </p>
+      </Card>
+    );
+  }
+
+  // Determinar qué formato está disponible
+  const availableFormat = weeklyBook.pdfUrl ? 'PDF' : 'EPUB';
+  const hasMultipleFormats = weeklyBook.pdfUrl && weeklyBook.epubUrl;
 
   return (
     <Card className="p-6 sm:p-8 bg-gradient-to-br from-card to-card/50 border-border">
@@ -4750,55 +5059,81 @@ const BookChallenge = () => {
             LIBRO DE LA SEMANA
           </div>
           <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
-            Principios (Principles)
+            {weeklyBook.title}
           </h2>
           <p className="text-lg sm:text-xl text-muted-foreground">
-            por <span className="text-foreground font-semibold">Ray Dalio</span>
+            por <span className="text-foreground font-semibold">{weeklyBook.author}</span>
           </p>
         </div>
 
-        <div className="p-4 sm:p-6 bg-muted/30 border border-border rounded-lg">
-          <div className="flex items-start gap-3">
-            <div className="text-3xl sm:text-4xl text-gold">"</div>
-            <blockquote className="text-base sm:text-lg italic text-foreground/90 leading-relaxed">
-              El dolor + la reflexión = Progreso.
-            </blockquote>
-          </div>
-          <p className="mt-4 text-sm text-muted-foreground">
-            — Ray Dalio, Fundador de Bridgewater Associates
-          </p>
-        </div>
-
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold">Sobre este libro</h3>
-          <p className="text-muted-foreground leading-relaxed text-sm sm:text-base">
-            Ray Dalio, uno de los inversores más exitosos del mundo, comparte los principios
-            fundamentales que le han permitido alcanzar un éxito extraordinario tanto en los
-            negocios como en la vida.
-          </p>
-
-          <div className="flex items-center gap-6 pt-2">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Clock className="w-5 h-5" />
-              <span className="text-sm">12 horas de lectura</span>
+        {/* Mentor Quote */}
+        {weeklyBook.mentorQuote && (
+          <div className="p-4 sm:p-6 bg-muted/30 border border-border rounded-lg">
+            <div className="flex items-start gap-3">
+              <div className="text-3xl sm:text-4xl text-gold">"</div>
+              <blockquote className="text-base sm:text-lg italic text-foreground/90 leading-relaxed">
+                {weeklyBook.mentorQuote}
+              </blockquote>
             </div>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <BookOpen className="w-5 h-5" />
-              <span className="text-sm">592 páginas</span>
+            <p className="mt-4 text-sm text-muted-foreground">
+              — {weeklyBook.recommendedBy}, {weeklyBook.recommenderRole}
+            </p>
+          </div>
+        )}
+
+        {/* Book Description */}
+        {weeklyBook.description && (
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold">Sobre este libro</h3>
+            <p className="text-muted-foreground leading-relaxed text-sm sm:text-base">
+              {weeklyBook.description}
+            </p>
+
+            <div className="flex items-center gap-6 pt-2">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Clock className="w-5 h-5" />
+                <span className="text-sm">12 horas de lectura</span>
+              </div>
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <BookOpen className="w-5 h-5" />
+                <span className="text-sm">{weeklyBook.totalPages} páginas</span>
+              </div>
             </div>
+          </div>
+        )}
+
+        {/* Format Badge */}
+        <div className="flex items-center gap-2 p-3 bg-primary/10 border border-primary/30 rounded-lg">
+          <FileText className="w-5 h-5 text-primary" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-foreground">
+              Formato disponible: <span className="text-primary">{availableFormat}</span>
+            </p>
+            {hasMultipleFormats && (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                También disponible en {availableFormat === 'PDF' ? 'EPUB' : 'PDF'}
+              </p>
+            )}
           </div>
         </div>
 
+        {/* Action Buttons */}
         <div className="flex flex-col gap-3">
           <Button
             onClick={handleDownload}
+            disabled={isDownloading}
             className={`w-full py-6 text-lg font-semibold ${
               isDownloaded 
                 ? 'bg-green-600 hover:bg-green-700' 
                 : 'bg-primary hover:bg-primary/90'
             }`}
           >
-            {isDownloaded ? (
+            {isDownloading ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                Descargando...
+              </>
+            ) : isDownloaded ? (
               <>
                 <CheckCircle className="w-5 h-5 mr-2" />
                 Descargado - Descargar de Nuevo
@@ -4806,14 +5141,14 @@ const BookChallenge = () => {
             ) : (
               <>
                 <Download className="w-5 h-5 mr-2" />
-                Descargar Libro (EPUB/PDF)
+                Descargar Libro ({availableFormat})
               </>
             )}
           </Button>
           
           <Button
             variant="outline"
-            onClick={() => navigate(`/book/${bookId}`)}
+            onClick={() => navigate(`/book/${weeklyBook.id}`)}
             className="w-full py-5 border-gold/30 text-gold hover:bg-gold/10"
           >
             Ver Detalles y Reseñas
@@ -4824,8 +5159,41 @@ const BookChallenge = () => {
   );
 };
 
-export default BookChallenge;
+export default BookChallenge;```
+
+## File: src/components/ProtectedRoute.tsx
+
 ```
+// src/components/ProtectedRoute.tsx
+import { Navigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+
+interface ProtectedRouteProps {
+  children: React.ReactNode;
+}
+
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-muted-foreground">Cargando...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+export default ProtectedRoute;```
 
 ## File: src/components/StarRating.tsx
 
@@ -4881,30 +5249,19 @@ export default StarRating;
 ## File: src/components/BookReader.tsx
 
 ```
-import { useState, useCallback, useRef } from "react";
+// src/components/BookReader.tsx
+import { useState, useCallback, useRef, useEffect } from "react";
 import { ReactReader } from "react-reader";
 import type { Contents, Rendition } from "epubjs";
 import { Book } from "@/data/books";
 import { ReaderHeader } from "./ReaderHeader";
 import { ReaderProgress } from "./ReaderProgress";
 import { useDebounce } from "@/hooks/useDebounce";
+import { analyticsService } from "@/services/api";
 
 interface BookReaderProps {
   book: Book;
 }
-
-const saveProgressToBackend = (
-  bookId: string,
-  location: string,
-  percentage: number
-) => {
-  console.log("Guardando en Backend Django:", {
-    bookId,
-    location,
-    percentage,
-    timestamp: new Date().toISOString(),
-  });
-};
 
 export const BookReader = ({ book }: BookReaderProps) => {
   const [location, setLocation] = useState<string | number>(
@@ -4912,15 +5269,22 @@ export const BookReader = ({ book }: BookReaderProps) => {
   );
   const [percentage, setPercentage] = useState(book.progress);
   const [showUI, setShowUI] = useState(true);
+  const [currentPage, setCurrentPage] = useState(0);
   const renditionRef = useRef<Rendition | null>(null);
   const tocRef = useRef<any[]>([]);
 
-  const debouncedSave = useDebounce(
-    (loc: string, pct: number) => {
-      saveProgressToBackend(book.id, loc, pct);
-    },
-    1500
-  );
+  // Sincronizar progreso con el backend
+  const syncProgressToBackend = useCallback(async (pages: number) => {
+    try {
+      await analyticsService.updateProgress(parseInt(book.id), pages);
+      console.log('✅ Progreso sincronizado:', pages, 'páginas');
+    } catch (error) {
+      console.error('❌ Error syncing progress:', error);
+    }
+  }, [book.id]);
+
+  // Debounce para no saturar el backend
+  const debouncedSync = useDebounce(syncProgressToBackend, 3000);
 
   const locationChanged = useCallback(
     (epubcifi: string) => {
@@ -4933,12 +5297,18 @@ export const BookReader = ({ book }: BookReaderProps) => {
           if (start && typeof start.percentage === "number") {
             const pct = Math.round(start.percentage * 100);
             setPercentage(pct);
-            debouncedSave(epubcifi, pct);
+
+            // Calcular página aproximada basada en porcentaje
+            const estimatedPage = Math.round((pct / 100) * book.totalPages);
+            setCurrentPage(estimatedPage);
+
+            // Sincronizar con backend (debounced)
+            debouncedSync(estimatedPage);
           }
         }
       }
     },
-    [debouncedSave]
+    [debouncedSync, book.totalPages]
   );
 
   const handleTap = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -4973,19 +5343,19 @@ export const BookReader = ({ book }: BookReaderProps) => {
         color: "#e8e4dc !important",
         "font-family": "'Merriweather', Georgia, serif !important",
         "line-height": "1.8 !important",
-        "padding": "0 16px !important",
+        padding: "0 16px !important",
       },
-      "a": {
+      a: {
         color: "#ffd700 !important",
       },
-      "p": {
+      p: {
         "margin-bottom": "1em !important",
       },
     });
 
     rendition.themes.select("dark");
 
-    // Enable swipe navigation
+    // Enable keyboard navigation
     rendition.on("keyup", (e: KeyboardEvent) => {
       if (e.key === "ArrowLeft") rendition.prev();
       if (e.key === "ArrowRight") rendition.next();
@@ -4995,6 +5365,15 @@ export const BookReader = ({ book }: BookReaderProps) => {
   const handleTocLoaded = useCallback((toc: any[]) => {
     tocRef.current = toc;
   }, []);
+
+  // Sincronizar progreso final al salir
+  useEffect(() => {
+    return () => {
+      if (currentPage > 0) {
+        syncProgressToBackend(currentPage);
+      }
+    };
+  }, [currentPage, syncProgressToBackend]);
 
   return (
     <div
@@ -5041,8 +5420,7 @@ export const BookReader = ({ book }: BookReaderProps) => {
       <ReaderProgress percentage={percentage} visible={showUI} />
     </div>
   );
-};
-```
+};```
 
 ## File: src/components/ReaderHeader.tsx
 
@@ -5088,26 +5466,45 @@ export const ReaderHeader = ({ title, visible }: ReaderHeaderProps) => {
 ## File: src/components/ReviewCard.tsx
 
 ```
+// src/components/ReviewCard.tsx
 import { Card } from "@/components/ui/card";
 import StarRating from "./StarRating";
-import { Review } from "@/hooks/useUserStore";
+import { type Review } from "@/services/api";
 
 interface ReviewCardProps {
   review: Review;
   featured?: boolean;
+  isCurrentUser?: boolean;
 }
 
-const ReviewCard = ({ review, featured = false }: ReviewCardProps) => {
+const ReviewCard = ({ review, featured = false, isCurrentUser = false }: ReviewCardProps) => {
+  // Formatear fecha
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('es-MX', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  };
+
   return (
-    <Card className={`p-4 bg-card/50 border-border ${featured ? 'border-gold/30' : ''}`}>
+    <Card className={`p-4 bg-card/50 border-border ${featured ? 'border-gold/30' : ''} ${isCurrentUser ? 'border-primary/30' : ''}`}>
       <div className="flex items-start justify-between mb-2">
         <div>
-          <p className="font-semibold text-foreground">{review.userName}</p>
-          <p className="text-xs text-muted-foreground">{review.createdAt}</p>
+          <p className="font-semibold text-foreground">
+            {review.usuario_nombre}
+            {isCurrentUser && (
+              <span className="ml-2 text-xs text-primary">(Tú)</span>
+            )}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {formatDate(review.fecha_creacion)}
+          </p>
         </div>
-        <StarRating rating={review.rating} readonly size="sm" />
+        <StarRating rating={review.calificacion} readonly size="sm" />
       </div>
-      <p className="text-sm text-foreground/90 leading-relaxed">{review.comment}</p>
+      <p className="text-sm text-foreground/90 leading-relaxed">{review.comentario}</p>
       {featured && (
         <div className="mt-3 flex items-center gap-1 text-gold text-xs font-medium">
           <span>⭐</span> Reseña Destacada
@@ -5117,8 +5514,7 @@ const ReviewCard = ({ review, featured = false }: ReviewCardProps) => {
   );
 };
 
-export default ReviewCard;
-```
+export default ReviewCard;```
 
 ## File: src/components/ReaderProgress.tsx
 
@@ -5347,6 +5743,7 @@ createRoot(document.getElementById("root")!).render(<App />);
 ## File: src/pages/Index.tsx
 
 ```
+// src/pages/Index.tsx
 import Header from "@/components/Header";
 import BookChallenge from "@/components/BookChallenge";
 import ProgressCard from "@/components/ProgressCard";
@@ -5398,6 +5795,259 @@ const Index = () => {
 export default Index;
 ```
 
+## File: src/pages/Register.tsx
+
+```
+// ==========================================
+// ARCHIVO 2: src/pages/Register.tsx
+// ==========================================
+import { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { authService } from '@/services/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card } from '@/components/ui/card';
+import { toast } from 'sonner';
+
+const Register = () => {
+  const navigate = useNavigate();
+  const [isLoading, setIsLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    username: '',
+    email: '',
+    first_name: '',
+    password: '',
+    confirmPassword: '',
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (formData.password !== formData.confirmPassword) {
+      toast.error('Las contraseñas no coinciden');
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      toast.error('La contraseña debe tener al menos 6 caracteres');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      await authService.register({
+        username: formData.username,
+        email: formData.email,
+        first_name: formData.first_name,
+        password: formData.password,
+      });
+      
+      toast.success('¡Cuenta creada! Ahora inicia sesión');
+      navigate('/login');
+    } catch (error: any) {
+      toast.error(error.message || 'Error al crear la cuenta');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <Card className="w-full max-w-md p-8 space-y-6">
+        <div className="text-center space-y-2">
+          <h1 className="text-3xl font-bold">
+            <span className="text-gold">1%</span> READS
+          </h1>
+          <p className="text-muted-foreground">Únete a la élite de lectores</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="username">Usuario</Label>
+            <Input
+              id="username"
+              type="text"
+              value={formData.username}
+              onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              required
+              disabled={isLoading}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              required
+              disabled={isLoading}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="first_name">Nombre</Label>
+            <Input
+              id="first_name"
+              type="text"
+              value={formData.first_name}
+              onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+              required
+              disabled={isLoading}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="password">Contraseña</Label>
+            <Input
+              id="password"
+              type="password"
+              value={formData.password}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              required
+              disabled={isLoading}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="confirmPassword">Confirmar Contraseña</Label>
+            <Input
+              id="confirmPassword"
+              type="password"
+              value={formData.confirmPassword}
+              onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+              required
+              disabled={isLoading}
+            />
+          </div>
+
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={isLoading}
+          >
+            {isLoading ? 'Creando cuenta...' : 'Crear Cuenta'}
+          </Button>
+        </form>
+
+        <div className="text-center text-sm">
+          <span className="text-muted-foreground">¿Ya tienes cuenta? </span>
+          <Link to="/login" className="text-primary hover:underline">
+            Inicia sesión aquí
+          </Link>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+export default Register;```
+
+## File: src/pages/Login.tsx
+
+```
+// ==========================================
+// ARCHIVO 1: src/pages/Login.tsx
+// ==========================================
+import { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card } from '@/components/ui/card';
+import { toast } from 'sonner';
+
+const Login = () => {
+  const navigate = useNavigate();
+  const { login, isAuthenticated } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    username: '',
+    password: '',
+  });
+
+  // Si ya está autenticado, redirigir
+  if (isAuthenticated) {
+    navigate('/');
+    return null;
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+
+    try {
+      await login(formData.username, formData.password);
+      toast.success('¡Bienvenido de vuelta!');
+      navigate('/');
+    } catch (error: any) {
+      toast.error(error.message || 'Error al iniciar sesión');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <Card className="w-full max-w-md p-8 space-y-6">
+        <div className="text-center space-y-2">
+          <h1 className="text-3xl font-bold">
+            <span className="text-gold">1%</span> READS
+          </h1>
+          <p className="text-muted-foreground">Inicia sesión en tu cuenta</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="username">Usuario</Label>
+            <Input
+              id="username"
+              type="text"
+              value={formData.username}
+              onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+              required
+              disabled={isLoading}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="password">Contraseña</Label>
+            <Input
+              id="password"
+              type="password"
+              value={formData.password}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              required
+              disabled={isLoading}
+            />
+          </div>
+
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={isLoading}
+          >
+            {isLoading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
+          </Button>
+        </form>
+
+        <div className="text-center text-sm">
+          <span className="text-muted-foreground">¿No tienes cuenta? </span>
+          <Link to="/register" className="text-primary hover:underline">
+            Regístrate aquí
+          </Link>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+export default Login;```
+
 ## File: src/pages/NotFound.tsx
 
 ```
@@ -5430,20 +6080,41 @@ export default NotFound;
 ## File: src/pages/Profile.tsx
 
 ```
+// src/pages/Profile.tsx
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Download, BookOpen, Library } from "lucide-react";
-import { useUserStore } from "@/hooks/useUserStore";
-import { books } from "@/data/books";
+import { useAuth } from "@/contexts/AuthContext";
+import { analyticsService, type BookProgress } from "@/services/api";
+import { toast } from "sonner";
 
 const Profile = () => {
   const navigate = useNavigate();
-  const { userData } = useUserStore();
-  
-  const downloadedBooks = books.filter(book => 
-    userData.downloadedBooks.includes(book.id)
-  );
+  const { user } = useAuth();
+  const [library, setLibrary] = useState<BookProgress[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    loadLibrary();
+  }, []);
+
+  const loadLibrary = async () => {
+    try {
+      const myLibrary = await analyticsService.getMyLibrary();
+      setLibrary(myLibrary);
+    } catch (error) {
+      console.error('Error loading library:', error);
+      toast.error('Error al cargar tu biblioteca');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const downloadedBooks = library.length;
+  const booksInProgress = library.filter(b => b.estado === 'EN_PROGRESO').length;
+  const finishedBooks = library.filter(b => b.estado === 'FINALIZADO').length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -5463,41 +6134,80 @@ const Profile = () => {
       </header>
 
       <main className="container mx-auto px-4 py-6 space-y-8">
+        {/* User Info Card */}
+        <Card className="p-6 bg-gradient-to-br from-primary/10 to-card border-primary/30">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center">
+              <span className="text-2xl font-bold text-primary">
+                {user?.username.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold">{user?.username}</h2>
+              <p className="text-muted-foreground">{user?.email}</p>
+              <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 bg-gold/20 text-gold rounded-full text-sm font-medium">
+                🏆 {user?.rango_actual || 'Iniciado'}
+              </div>
+            </div>
+          </div>
+        </Card>
+
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 gap-4">
-          <Card className="p-6 bg-gradient-to-br from-primary/20 to-card border-primary/30">
+        <div className="grid grid-cols-3 gap-4">
+          <Card className="p-4 bg-gradient-to-br from-primary/20 to-card border-primary/30">
             <div className="flex flex-col items-center text-center">
-              <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-3">
+              <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-2">
                 <Download className="w-6 h-6 text-primary" />
               </div>
-              <p className="text-3xl font-bold text-foreground">
-                {userData.downloadedBooks.length}
-              </p>
-              <p className="text-sm text-muted-foreground">Libros Descargados</p>
+              <p className="text-2xl font-bold text-foreground">{downloadedBooks}</p>
+              <p className="text-xs text-muted-foreground">Descargados</p>
             </div>
           </Card>
 
-          <Card className="p-6 bg-gradient-to-br from-gold/20 to-card border-gold/30">
+          <Card className="p-4 bg-gradient-to-br from-gold/20 to-card border-gold/30">
             <div className="flex flex-col items-center text-center">
-              <div className="w-12 h-12 rounded-full bg-gold/20 flex items-center justify-center mb-3">
+              <div className="w-12 h-12 rounded-full bg-gold/20 flex items-center justify-center mb-2">
                 <BookOpen className="w-6 h-6 text-gold" />
               </div>
-              <p className="text-3xl font-bold text-foreground">
-                {userData.downloadedBooks.length}
-              </p>
-              <p className="text-sm text-muted-foreground">Libros Leídos</p>
+              <p className="text-2xl font-bold text-foreground">{booksInProgress}</p>
+              <p className="text-xs text-muted-foreground">Leyendo</p>
+            </div>
+          </Card>
+
+          <Card className="p-4 bg-gradient-to-br from-green-500/20 to-card border-green-500/30">
+            <div className="flex flex-col items-center text-center">
+              <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mb-2">
+                <span className="text-2xl">✓</span>
+              </div>
+              <p className="text-2xl font-bold text-foreground">{finishedBooks}</p>
+              <p className="text-xs text-muted-foreground">Terminados</p>
             </div>
           </Card>
         </div>
+
+        {/* Points Card */}
+        <Card className="p-6 bg-card/50 border-border">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Puntos Totales</p>
+              <p className="text-3xl font-bold text-gold">{user?.puntos_totales || 0}</p>
+            </div>
+            <div className="text-5xl">🏆</div>
+          </div>
+        </Card>
 
         {/* Downloaded Books History */}
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <Library className="w-5 h-5 text-gold" />
-            <h2 className="text-xl font-bold">Mis Libros Descargados</h2>
+            <h2 className="text-xl font-bold">Mi Biblioteca</h2>
           </div>
 
-          {downloadedBooks.length === 0 ? (
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : library.length === 0 ? (
             <Card className="p-8 bg-card/50 border-border text-center">
               <Download className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
               <p className="text-muted-foreground mb-4">
@@ -5512,58 +6222,55 @@ const Profile = () => {
             </Card>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {downloadedBooks.map((book) => (
+              {library.map((progress) => (
                 <Card
-                  key={book.id}
+                  key={progress.id}
                   className="overflow-hidden bg-card/50 border-border group cursor-pointer"
-                  onClick={() => navigate(`/book/${book.id}`)}
+                  onClick={() => navigate(`/book/${progress.libro}`)}
                 >
                   <div className="aspect-[3/4] relative overflow-hidden">
                     <img
-                      src={book.cover}
-                      alt={book.title}
+                      src={progress.libro_detalle.portada}
+                      alt={progress.libro_detalle.titulo}
                       className="w-full h-full object-cover transition-transform group-hover:scale-105"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                    
+                    {/* Progress Badge */}
+                    <div className="absolute top-2 right-2 bg-primary/90 text-white text-xs font-bold px-2 py-1 rounded">
+                      {Math.round(progress.porcentaje_avance)}%
+                    </div>
+
+                    {/* Book Info */}
                     <div className="absolute bottom-2 left-2 right-2">
                       <p className="text-xs font-medium text-white truncate">
-                        {book.title}
+                        {progress.libro_detalle.titulo}
                       </p>
                       <p className="text-xs text-white/70 truncate">
-                        {book.author}
+                        {progress.libro_detalle.autor}
                       </p>
+                    </div>
+                  </div>
+
+                  {/* Status Bar */}
+                  <div className="p-2 bg-card">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className={`font-medium ${
+                        progress.estado === 'FINALIZADO' ? 'text-green-500' :
+                        progress.estado === 'EN_PROGRESO' ? 'text-gold' :
+                        'text-muted-foreground'
+                      }`}>
+                        {progress.estado === 'FINALIZADO' ? 'Terminado' :
+                         progress.estado === 'EN_PROGRESO' ? 'Leyendo' :
+                         'Descargado'}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {progress.paginas_leidas}/{progress.libro_detalle.total_paginas}
+                      </span>
                     </div>
                   </div>
                 </Card>
               ))}
-            </div>
-          )}
-        </div>
-
-        {/* User Reviews */}
-        <div className="space-y-4">
-          <h2 className="text-xl font-bold">Mis Reseñas</h2>
-          {userData.reviews.filter(r => r.userId === 'current_user').length === 0 ? (
-            <Card className="p-6 bg-card/50 border-border text-center">
-              <p className="text-muted-foreground">
-                Aún no has escrito ninguna reseña
-              </p>
-            </Card>
-          ) : (
-            <div className="grid gap-3">
-              {userData.reviews
-                .filter(r => r.userId === 'current_user')
-                .map((review) => {
-                  const book = books.find(b => b.id === review.bookId);
-                  return (
-                    <Card key={review.id} className="p-4 bg-card/50 border-border">
-                      <p className="text-sm font-medium text-gold mb-1">
-                        {book?.title}
-                      </p>
-                      <p className="text-sm text-foreground/90">{review.comment}</p>
-                    </Card>
-                  );
-                })}
             </div>
           )}
         </div>
@@ -5572,52 +6279,130 @@ const Profile = () => {
   );
 };
 
-export default Profile;
-```
+export default Profile;```
 
 ## File: src/pages/BookDetail.tsx
 
 ```
+// src/pages/BookDetail.tsx
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ArrowLeft, Download, Clock, BookOpen, CheckCircle, Sparkles } from "lucide-react";
-import { getBookById } from "@/data/books";
-import { useUserStore } from "@/hooks/useUserStore";
+import { ArrowLeft, Download, Clock, BookOpen, CheckCircle, Sparkles, FileText } from "lucide-react";
+import { getBookById, type Book } from "@/data/books";
+import { useAuth } from "@/contexts/AuthContext";
+import { analyticsService } from "@/services/api";
 import ReviewsSection from "@/components/ReviewsSection";
 import { toast } from "sonner";
 
 const BookDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { registerDownload, hasDownloaded } = useUserStore();
-  
-  const book = getBookById(id || "");
+  const { isAuthenticated } = useAuth();
+  const [book, setBook] = useState<Book | null>(null);
+  const [isDownloaded, setIsDownloaded] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  if (!book) {
+  useEffect(() => {
+    loadBook();
+  }, [id]);
+
+  const loadBook = async () => {
+    if (!id) return;
+
+    try {
+      const bookData = await getBookById(id);
+      if (bookData) {
+        setBook(bookData);
+
+        if (isAuthenticated) {
+          try {
+            const library = await analyticsService.getMyLibrary();
+            const hasBook = library.some(p => p.libro === parseInt(id));
+            setIsDownloaded(hasBook);
+          } catch (error) {
+            console.error('Error checking download status:', error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading book:', error);
+      toast.error('Error al cargar el libro');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!book) return;
+
+    if (!isAuthenticated) {
+      toast.error('Debes iniciar sesión para descargar libros');
+      navigate('/login');
+      return;
+    }
+
+    setIsDownloading(true);
+
+    try {
+      // Registrar descarga
+      await analyticsService.registerDownload(parseInt(book.id));
+
+      // Descargar PDF (preferencia) o EPUB
+      const downloadUrl = book.pdfUrl || book.epubUrl;
+      const fileExtension = book.pdfUrl ? 'pdf' : 'epub';
+
+      if (!downloadUrl) {
+        toast.error('No hay archivo disponible para descargar');
+        setIsDownloading(false);
+        return;
+      }
+
+      // Crear link de descarga
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `${book.title}.${fileExtension}`;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setIsDownloaded(true);
+      toast.success(`¡Descarga iniciada! Libro en formato ${fileExtension.toUpperCase()}`);
+    } catch (error: any) {
+      console.error('Download error:', error);
+      toast.error(error.message || 'Error al descargar el libro');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <p className="text-muted-foreground">Libro no encontrado</p>
+        <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
-  const isDownloaded = hasDownloaded(book.id);
+  if (!book) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <p className="text-muted-foreground">Libro no encontrado</p>
+          <Button onClick={() => navigate('/')}>
+            Volver al inicio
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
-  const handleDownload = () => {
-    // Simulate download
-    const link = document.createElement('a');
-    link.href = book.epubUrl;
-    link.download = `${book.title}.epub`;
-    link.target = '_blank';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    // Register download
-    registerDownload(book.id);
-    toast.success("¡Descarga iniciada! El libro se añadió a tu biblioteca.");
-  };
+  // Determinar formato disponible
+  const availableFormat = book.pdfUrl ? 'PDF' : 'EPUB';
+  const hasMultipleFormats = book.pdfUrl && book.epubUrl;
 
   return (
     <div className="min-h-screen bg-background pb-8">
@@ -5675,22 +6460,45 @@ const BookDetail = () => {
               </div>
               <div className="flex items-center gap-1">
                 <BookOpen className="w-4 h-4" />
-                <span>592 páginas</span>
+                <span>{book.totalPages} páginas</span>
               </div>
             </div>
           </div>
         </div>
 
+        {/* Format Badge */}
+        <Card className="p-3 bg-primary/10 border-primary/30">
+          <div className="flex items-center gap-3">
+            <FileText className="w-5 h-5 text-primary flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">
+                Formato disponible: <span className="text-primary">{availableFormat}</span>
+              </p>
+              {hasMultipleFormats && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  También disponible en {availableFormat === 'PDF' ? 'EPUB' : 'PDF'}
+                </p>
+              )}
+            </div>
+          </div>
+        </Card>
+
         {/* Download Button */}
         <Button
           onClick={handleDownload}
+          disabled={isDownloading}
           className={`w-full py-6 text-lg font-semibold ${
             isDownloaded 
               ? 'bg-green-600 hover:bg-green-700' 
               : 'bg-primary hover:bg-primary/90'
           }`}
         >
-          {isDownloaded ? (
+          {isDownloading ? (
+            <>
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+              Descargando...
+            </>
+          ) : isDownloaded ? (
             <>
               <CheckCircle className="w-5 h-5 mr-2" />
               Descargado - Descargar de Nuevo
@@ -5698,34 +6506,35 @@ const BookDetail = () => {
           ) : (
             <>
               <Download className="w-5 h-5 mr-2" />
-              Descargar Libro (EPUB/PDF)
+              Descargar Libro ({availableFormat})
             </>
           )}
         </Button>
 
         {/* Book Description */}
-        <Card className="p-6 bg-card/30 border-border">
-          <h3 className="text-lg font-semibold mb-3">Sobre este libro</h3>
-          <p className="text-muted-foreground leading-relaxed">
-            Ray Dalio, uno de los inversores más exitosos del mundo, comparte los principios
-            fundamentales que le han permitido alcanzar un éxito extraordinario tanto en los
-            negocios como en la vida. Este libro revolucionario te enseña cómo crear sistemas
-            para tomar mejores decisiones, aprender de los errores y alcanzar tus metas más ambiciosas.
-          </p>
-        </Card>
+        {book.description && (
+          <Card className="p-6 bg-card/30 border-border">
+            <h3 className="text-lg font-semibold mb-3">Sobre este libro</h3>
+            <p className="text-muted-foreground leading-relaxed">
+              {book.description}
+            </p>
+          </Card>
+        )}
 
         {/* Quote */}
-        <Card className="p-6 bg-muted/20 border-border">
-          <div className="flex items-start gap-3">
-            <div className="text-4xl text-gold">"</div>
-            <blockquote className="text-lg italic text-foreground/90 leading-relaxed">
-              El dolor + la reflexión = Progreso.
-            </blockquote>
-          </div>
-          <p className="mt-4 text-sm text-muted-foreground">
-            — {book.recommendedBy}, {book.recommenderRole}
-          </p>
-        </Card>
+        {book.mentorQuote && (
+          <Card className="p-6 bg-muted/20 border-border">
+            <div className="flex items-start gap-3">
+              <div className="text-4xl text-gold">"</div>
+              <blockquote className="text-lg italic text-foreground/90 leading-relaxed">
+                {book.mentorQuote}
+              </blockquote>
+            </div>
+            <p className="mt-4 text-sm text-muted-foreground">
+              — {book.recommendedBy}, {book.recommenderRole}
+            </p>
+          </Card>
+        )}
 
         {/* Reviews Section */}
         <ReviewsSection bookId={book.id} />
@@ -5734,19 +6543,78 @@ const BookDetail = () => {
   );
 };
 
-export default BookDetail;
-```
+
+export default BookDetail;```
 
 ## File: src/pages/ReadBook.tsx
 
 ```
+// src/pages/ReadBook.tsx
+import { useState, useEffect } from "react";
 import { useParams, Navigate } from "react-router-dom";
-import { getBookById } from "@/data/books";
+import { getBookById, type Book } from "@/data/books";
 import { BookReader } from "@/components/BookReader";
+import { analyticsService } from "@/services/api";
+import { toast } from "sonner";
 
 const ReadBook = () => {
   const { id } = useParams<{ id: string }>();
-  const book = id ? getBookById(id) : undefined;
+  const [book, setBook] = useState<Book | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    loadBook();
+  }, [id]);
+
+  const loadBook = async () => {
+    if (!id) return;
+
+    try {
+      // Cargar datos del libro
+      const bookData = await getBookById(id);
+      if (!bookData) {
+        toast.error('Libro no encontrado');
+        setIsLoading(false);
+        return;
+      }
+
+      // Cargar progreso del usuario
+      try {
+        const library = await analyticsService.getMyLibrary();
+        const bookProgress = library.find(p => p.libro === parseInt(id));
+        
+        if (bookProgress) {
+          // Combinar datos del libro con progreso
+          setBook({
+            ...bookData,
+            progress: Math.round(bookProgress.porcentaje_avance),
+            // Aquí podrías cargar la ubicación del EPUB si la guardas
+          });
+        } else {
+          setBook(bookData);
+        }
+      } catch (error) {
+        console.error('Error loading progress:', error);
+        setBook(bookData);
+      }
+    } catch (error) {
+      console.error('Error loading book:', error);
+      toast.error('Error al cargar el libro');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-muted-foreground">Cargando libro...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!book) {
     return <Navigate to="/" replace />;
@@ -5755,76 +6623,197 @@ const ReadBook = () => {
   return <BookReader book={book} />;
 };
 
-export default ReadBook;
+export default ReadBook;```
+
+## File: src/contexts/AuthContext.tsx
+
 ```
+// src/contexts/AuthContext.tsx
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { authService, type UserProfile } from '@/services/api';
+
+interface AuthContextType {
+  user: UserProfile | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  login: (username: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Cargar usuario al iniciar
+  useEffect(() => {
+    loadUser();
+  }, []);
+
+  const loadUser = async () => {
+    try {
+      if (authService.isAuthenticated()) {
+        const profile = await authService.getProfile();
+        setUser(profile);
+      }
+    } catch (error) {
+      console.error('Error loading user:', error);
+      // Si falla, limpiar tokens
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const login = async (username: string, password: string) => {
+    try {
+      await authService.login({ username, password });
+      await loadUser();
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await authService.logout();
+      setUser(null);
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
+  const refreshUser = async () => {
+    await loadUser();
+  };
+
+  const value = {
+    user,
+    isAuthenticated: !!user,
+    isLoading,
+    login,
+    logout,
+    refreshUser,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within AuthProvider');
+  }
+  return context;
+};```
 
 ## File: src/data/books.ts
 
 ```
+// src/data/books.ts
+import { booksService, type Book as ApiBook } from '@/services/api';
+
+// Adaptador: Convierte el formato de la API al formato de tu app
 export interface Book {
   id: string;
   title: string;
   author: string;
   cover: string;
   epubUrl: string;
+  pdfUrl?: string;
   recommendedBy: string;
   recommenderRole: string;
+  description?: string;
+  totalPages: number;
+  mentorQuote?: string;
   progress: number;
   currentLocation?: string;
 }
 
-export const books: Book[] = [
-  {
-    id: "alice-wonderland",
-    title: "Alice in Wonderland",
-    author: "Lewis Carroll",
-    cover: "https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=300&h=400&fit=crop",
-    epubUrl: "https://react-reader.metabits.no/files/alice.epub",
-    recommendedBy: "Elon Musk",
-    recommenderRole: "CEO de Tesla & SpaceX",
-    progress: 24,
+// Función helper para convertir libro de API a formato local
+export const adaptApiBook = (apiBook: ApiBook, progress: number = 0): Book => {
+  return {
+    id: apiBook.id.toString(),
+    title: apiBook.titulo,
+    author: apiBook.autor,
+    cover: apiBook.portada,
+    epubUrl: apiBook.archivo_epub || '',
+    pdfUrl: apiBook.archivo_pdf || undefined,
+    recommendedBy: apiBook.mentor_detalle?.nombre || 'Desconocido',
+    recommenderRole: apiBook.mentor_detalle?.ocupacion || '',
+    description: apiBook.descripcion,
+    totalPages: apiBook.total_paginas,
+    mentorQuote: apiBook.mentor_detalle?.frase_celebre,
+    progress,
     currentLocation: undefined,
-  },
-  {
-    id: "principles",
-    title: "Principios",
-    author: "Ray Dalio",
-    cover: "https://images.unsplash.com/photo-1589829085413-56de8ae18c73?w=300&h=400&fit=crop",
-    epubUrl: "https://react-reader.metabits.no/files/alice.epub",
-    recommendedBy: "Ray Dalio",
-    recommenderRole: "Fundador de Bridgewater",
-    progress: 0,
-  },
-  {
-    id: "thinking-fast",
-    title: "Pensar Rápido, Pensar Despacio",
-    author: "Daniel Kahneman",
-    cover: "https://images.unsplash.com/photo-1512820790803-83ca734da794?w=300&h=400&fit=crop",
-    epubUrl: "https://react-reader.metabits.no/files/alice.epub",
-    recommendedBy: "Bill Gates",
-    recommenderRole: "Fundador de Microsoft",
-    progress: 0,
-  },
-  {
-    id: "sapiens",
-    title: "Sapiens",
-    author: "Yuval Noah Harari",
-    cover: "https://images.unsplash.com/photo-1543002588-bfa74002ed7e?w=300&h=400&fit=crop",
-    epubUrl: "https://react-reader.metabits.no/files/alice.epub",
-    recommendedBy: "Mark Zuckerberg",
-    recommenderRole: "CEO de Meta",
-    progress: 0,
-  },
-];
-
-export const getCurrentBook = (): Book | undefined => {
-  return books.find(book => book.progress > 0) || books[0];
+  };
 };
 
-export const getBookById = (id: string): Book | undefined => {
-  return books.find(book => book.id === id);
+// Cache local (opcional, para evitar múltiples llamadas)
+let booksCache: Book[] = [];
+let lastFetchTime = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
+
+// Obtener todos los libros
+export const getBooks = async (): Promise<Book[]> => {
+  try {
+    // Si hay cache válido, retornarlo
+    const now = Date.now();
+    if (booksCache.length > 0 && now - lastFetchTime < CACHE_DURATION) {
+      return booksCache;
+    }
+
+    // Obtener de la API
+    const apiBooks = await booksService.getAllBooks();
+    booksCache = apiBooks.map(book => adaptApiBook(book));
+    lastFetchTime = now;
+    
+    return booksCache;
+  } catch (error) {
+    console.error('Error fetching books:', error);
+    return [];
+  }
 };
-```
+
+// Obtener libro por ID
+export const getBookById = async (id: string): Promise<Book | undefined> => {
+  try {
+    const apiBook = await booksService.getBookById(parseInt(id));
+    return adaptApiBook(apiBook);
+  } catch (error) {
+    console.error('Error fetching book:', error);
+    return undefined;
+  }
+};
+
+// Obtener libro de la semana
+export const getWeeklyBook = async (): Promise<Book | undefined> => {
+  try {
+    const apiBook = await booksService.getWeeklyBook();
+    return adaptApiBook(apiBook);
+  } catch (error) {
+    console.error('Error fetching weekly book:', error);
+    return undefined;
+  }
+};
+
+// Limpiar cache (útil después de actualizaciones)
+export const clearBooksCache = () => {
+  booksCache = [];
+  lastFetchTime = 0;
+};
+
+// Exportar array vacío por compatibilidad (ya no se usa)
+export const books: Book[] = [];
+
+// Mantener getCurrentBook para compatibilidad
+export const getCurrentBook = async (): Promise<Book | undefined> => {
+  const allBooks = await getBooks();
+  return allBooks.find(book => book.progress > 0) || allBooks[0];
+};```
 
 ## File: src/vite-env.d.ts
 
@@ -5841,6 +6830,393 @@ import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+```
+
+## File: src/services/api/index.ts
+
+```
+// ==========================================
+// ARCHIVO 6: src/services/api/index.ts
+// ==========================================
+export * from './config';
+export * from './authService';
+export * from './booksService';
+export * from './analyticsService';
+export * from './socialService';```
+
+## File: src/services/api/authService.ts
+
+```
+// ==========================================
+// ARCHIVO 2: src/services/api/authService.ts
+// ==========================================
+import { apiClient, handleApiError } from './config';
+
+export interface LoginCredentials {
+  username: string;
+  password: string;
+}
+
+export interface RegisterData {
+  username: string;
+  email: string;
+  password: string;
+  first_name: string;
+}
+
+export interface AuthTokens {
+  access: string;
+  refresh: string;
+}
+
+export interface UserProfile {
+  id: number;
+  username: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  bio: string;
+  avatar: string | null;
+  puntos_totales: number;
+  rango_actual: string;
+}
+
+class AuthService {
+  // Login
+  async login(credentials: LoginCredentials): Promise<AuthTokens> {
+    try {
+      const response = await apiClient.post<AuthTokens>('/users/login/', credentials);
+      
+      // Guardar tokens en localStorage
+      localStorage.setItem('access_token', response.data.access);
+      localStorage.setItem('refresh_token', response.data.refresh);
+      
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  // Registro
+  async register(data: RegisterData): Promise<UserProfile> {
+    try {
+      const response = await apiClient.post<UserProfile>('/users/register/', data);
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  // Obtener perfil del usuario actual
+  async getProfile(): Promise<UserProfile> {
+    try {
+      const response = await apiClient.get<UserProfile>('/users/me/');
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  // Logout
+  async logout(): Promise<void> {
+    try {
+      const refreshToken = localStorage.getItem('refresh_token');
+      if (refreshToken) {
+        await apiClient.post('/users/logout/', { refresh: refreshToken });
+      }
+    } catch (error) {
+      console.error('Error during logout:', error);
+    } finally {
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+    }
+  }
+
+  // Verificar si está autenticado
+  isAuthenticated(): boolean {
+    return !!localStorage.getItem('access_token');
+  }
+
+  // Obtener token
+  getToken(): string | null {
+    return localStorage.getItem('access_token');
+  }
+}
+
+export const authService = new AuthService();
+```
+
+## File: src/services/api/analyticsService.ts
+
+```
+// ==========================================
+// ARCHIVO 4: src/services/api/analyticsService.ts
+// ==========================================
+import { apiClient, handleApiError } from './config';
+import { Book } from './booksService';
+
+export interface BookProgress {
+  id: number;
+  usuario: number;
+  libro: number;
+  libro_detalle: Book;
+  estado: 'DESCARGADO' | 'EN_PROGRESO' | 'FINALIZADO';
+  paginas_leidas: number;
+  porcentaje_avance: number;
+}
+
+export interface DownloadResponse {
+  status: string;
+  progreso_id: number;
+  nuevo_registro: boolean;
+}
+
+export interface UpdateProgressResponse {
+  libro: string;
+  paginas_leidas: number;
+  porcentaje: number;
+  estado: string;
+}
+
+class AnalyticsService {
+  // Registrar descarga de libro
+  async registerDownload(bookId: number): Promise<DownloadResponse> {
+    try {
+      const response = await apiClient.post<DownloadResponse>(
+        `/analytics/download/${bookId}/`
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  // Actualizar progreso de lectura
+  async updateProgress(
+    bookId: number, 
+    paginasLeidas: number
+  ): Promise<UpdateProgressResponse> {
+    try {
+      const response = await apiClient.post<UpdateProgressResponse>(
+        `/analytics/update/${bookId}/`,
+        { paginas_leidas: paginasLeidas }
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  // Obtener mis libros (biblioteca personal)
+  async getMyLibrary(): Promise<BookProgress[]> {
+    try {
+      const response = await apiClient.get<BookProgress[]>('/analytics/my-library/');
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+}
+
+export const analyticsService = new AnalyticsService();
+```
+
+## File: src/services/api/socialService.ts
+
+```
+// ==========================================
+// ARCHIVO 5: src/services/api/socialService.ts
+// ==========================================
+import { apiClient, handleApiError } from './config';
+
+export interface Review {
+  id: number;
+  usuario_nombre: string;
+  libro: number;
+  calificacion: number;
+  comentario: string;
+  fecha_creacion: string;
+}
+
+export interface CreateReviewData {
+  libro: number;
+  calificacion: number;
+  comentario: string;
+}
+
+class SocialService {
+  // Crear reseña
+  async createReview(data: CreateReviewData): Promise<Review> {
+    try {
+      const response = await apiClient.post<Review>('/social/create/', data);
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  // Obtener reseñas de un libro
+  async getBookReviews(bookId: number): Promise<Review[]> {
+    try {
+      const response = await apiClient.get<Review[]>(`/social/book/${bookId}/`);
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+}
+
+export const socialService = new SocialService();
+```
+
+## File: src/services/api/config.ts
+
+```
+// ==========================================
+// ARCHIVO 1: src/services/api/config.ts
+// ==========================================
+import axios, { AxiosInstance, AxiosError } from 'axios';
+
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+
+// Cliente de Axios
+export const apiClient: AxiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 15000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Interceptor para agregar token automáticamente
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Interceptor para manejar errores y refresh token
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    const originalRequest = error.config as any;
+
+    // Si el token expiró (401) y no hemos reintentado
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+
+      try {
+        const refreshToken = localStorage.getItem('refresh_token');
+        if (!refreshToken) {
+          throw new Error('No refresh token');
+        }
+
+        // Intentar renovar el token
+        const response = await axios.post(`${API_BASE_URL}/users/refresh/`, {
+          refresh: refreshToken,
+        });
+
+        const newAccessToken = response.data.access;
+        localStorage.setItem('access_token', newAccessToken);
+
+        // Reintentar la petición original con el nuevo token
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+        return apiClient(originalRequest);
+      } catch (refreshError) {
+        // Si falla el refresh, cerrar sesión
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        window.location.href = '/login';
+        return Promise.reject(refreshError);
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+// Utilidad para manejar errores
+export const handleApiError = (error: unknown): string => {
+  if (axios.isAxiosError(error)) {
+    const message = error.response?.data?.error 
+      || error.response?.data?.message 
+      || error.message;
+    return message;
+  }
+  return 'Error desconocido';
+};```
+
+## File: src/services/api/booksService.ts
+
+```
+// ==========================================
+// ARCHIVO 3: src/services/api/booksService.ts
+// ==========================================
+import { apiClient, handleApiError } from './config';
+
+export interface Mentor {
+  id: number;
+  nombre: string;
+  foto: string | null;
+  ocupacion: string;
+  frase_celebre: string;
+}
+
+export interface Book {
+  id: number;
+  titulo: string;
+  autor: string;
+  descripcion: string;
+  portada: string;
+  archivo_epub: string | null;
+  archivo_pdf: string | null;
+  total_paginas: number;
+  mentor: number;
+  mentor_detalle: Mentor;
+  resena_mentor: string;
+  es_libro_semana: boolean;
+  fecha_lanzamiento?: string;
+}
+
+class BooksService {
+  // Obtener todos los libros
+  async getAllBooks(): Promise<Book[]> {
+    try {
+      const response = await apiClient.get<Book[]>('/library/books/');
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  // Obtener libro por ID
+  async getBookById(id: number): Promise<Book> {
+    try {
+      const response = await apiClient.get<Book>(`/library/books/${id}/`);
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  // Obtener libro de la semana
+  async getWeeklyBook(): Promise<Book> {
+    try {
+      const response = await apiClient.get<Book>('/library/books/weekly/');
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+}
+
+export const booksService = new BooksService();
+
 ```
 
 ## File: src/App.css
@@ -5893,39 +7269,73 @@ export function cn(...inputs: ClassValue[]) {
 ## File: src/App.tsx
 
 ```
+// src/App.tsx
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
 import ReadBook from "./pages/ReadBook";
 import Profile from "./pages/Profile";
 import BookDetail from "./pages/BookDetail";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
+import ProtectedRoute from "./components/ProtectedRoute";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/read/:id" element={<ReadBook />} />
-          <Route path="/profile" element={<Profile />} />
-          <Route path="/book/:id" element={<BookDetail />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
+      <AuthProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
+            {/* Rutas públicas */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/" element={<Index />} />
+            <Route path="/book/:id" element={<BookDetail />} />
+            
+            {/* Rutas protegidas */}
+            <Route
+              path="/read/:id"
+              element={
+                <ProtectedRoute>
+                  <ReadBook />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <Profile />
+                </ProtectedRoute>
+              }
+            />
+            
+            {/* 404 */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );
 
-export default App;
-```
+export default App;```
 
 ## File: src/hooks/use-toast.ts
 
@@ -6185,145 +7595,178 @@ export function useDebounce<T extends (...args: any[]) => void>(
 ## File: src/hooks/useUserStore.ts
 
 ```
+// src/hooks/useUserStore.ts
 import { useState, useEffect } from 'react';
+import { 
+  authService, 
+  analyticsService, 
+  socialService,
+  type UserProfile,
+  type BookProgress,
+  type Review
+} from '@/services/api';
 
-export interface Review {
-  id: string;
-  bookId: string;
-  userId: string;
-  userName: string;
-  rating: number;
-  comment: string;
-  createdAt: string;
-}
-
-export interface BookProgress {
-  currentPage: number;
-  totalPages: number;
-}
-
-export interface UserData {
-  downloadedBooks: string[];
+interface UserData {
+  profile: UserProfile | null;
+  downloadedBooks: BookProgress[];
   reviews: Review[];
-  bookProgress: Record<string, BookProgress>;
+  isAuthenticated: boolean;
+  isLoading: boolean;
 }
 
-const STORAGE_KEY = 'elite_reader_user_data';
-
-const mockReviews: Review[] = [
-  {
-    id: '1',
-    bookId: 'principles',
-    userId: 'elite_1',
-    userName: 'Carlos Mendoza',
-    rating: 5,
-    comment: 'Este libro cambió mi forma de pensar sobre los negocios y la vida. Los principios de Dalio son oro puro.',
-    createdAt: '2024-01-15',
-  },
-  {
-    id: '2',
-    bookId: 'principles',
-    userId: 'elite_2',
-    userName: 'María García',
-    rating: 5,
-    comment: 'Imprescindible para cualquier emprendedor. La claridad con la que explica sus sistemas de toma de decisiones es brillante.',
-    createdAt: '2024-01-10',
-  },
-];
-
-const getInitialData = (): UserData => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return {
-        ...parsed,
-        reviews: [...mockReviews, ...(parsed.reviews || [])],
-        bookProgress: parsed.bookProgress || {},
-      };
-    }
-  } catch (e) {
-    console.error('Error reading from localStorage:', e);
-  }
-  return { downloadedBooks: [], reviews: mockReviews, bookProgress: {} };
+const initialState: UserData = {
+  profile: null,
+  downloadedBooks: [],
+  reviews: [],
+  isAuthenticated: false,
+  isLoading: true,
 };
 
 export const useUserStore = () => {
-  const [userData, setUserData] = useState<UserData>(getInitialData);
+  const [userData, setUserData] = useState<UserData>(initialState);
 
+  // Cargar datos del usuario al iniciar
   useEffect(() => {
+    loadUserData();
+  }, []);
+
+  const loadUserData = async () => {
     try {
-      const toStore = {
-        downloadedBooks: userData.downloadedBooks,
-        reviews: userData.reviews.filter(r => !mockReviews.find(m => m.id === r.id)),
-        bookProgress: userData.bookProgress,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
-    } catch (e) {
-      console.error('Error saving to localStorage:', e);
-    }
-  }, [userData]);
-
-  const registerDownload = (bookId: string) => {
-    setUserData(prev => {
-      if (prev.downloadedBooks.includes(bookId)) {
-        return prev;
+      if (!authService.isAuthenticated()) {
+        setUserData({ ...initialState, isLoading: false });
+        return;
       }
-      console.log('Registrando descarga en Backend:', { bookId, timestamp: new Date().toISOString() });
-      return {
+
+      // Cargar perfil
+      const profile = await authService.getProfile();
+      
+      // Cargar biblioteca
+      const library = await analyticsService.getMyLibrary();
+
+      setUserData({
+        profile,
+        downloadedBooks: library,
+        reviews: [], // Las reviews se cargan por libro
+        isAuthenticated: true,
+        isLoading: false,
+      });
+    } catch (error) {
+      console.error('Error loading user data:', error);
+      setUserData({ ...initialState, isLoading: false });
+    }
+  };
+
+  // Login
+  const login = async (username: string, password: string) => {
+    try {
+      await authService.login({ username, password });
+      await loadUserData();
+      return true;
+    } catch (error) {
+      console.error('Login error:', error);
+      throw error;
+    }
+  };
+
+  // Logout
+  const logout = async () => {
+    try {
+      await authService.logout();
+      setUserData({ ...initialState, isLoading: false });
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
+  // Registrar descarga
+  const registerDownload = async (bookId: number) => {
+    try {
+      await analyticsService.registerDownload(bookId);
+      // Recargar biblioteca
+      const library = await analyticsService.getMyLibrary();
+      setUserData(prev => ({
         ...prev,
-        downloadedBooks: [...prev.downloadedBooks, bookId],
-      };
-    });
+        downloadedBooks: library,
+      }));
+      return true;
+    } catch (error) {
+      console.error('Download registration error:', error);
+      throw error;
+    }
   };
 
-  const addReview = (bookId: string, rating: number, comment: string) => {
-    const newReview: Review = {
-      id: `user_${Date.now()}`,
-      bookId,
-      userId: 'current_user',
-      userName: 'Tú',
-      rating,
-      comment,
-      createdAt: new Date().toISOString().split('T')[0],
-    };
-    
-    console.log('Guardando reseña en Backend:', newReview);
-    
-    setUserData(prev => ({
-      ...prev,
-      reviews: [newReview, ...prev.reviews],
-    }));
+  // Verificar si un libro está descargado
+  const hasDownloaded = (bookId: number): boolean => {
+    return userData.downloadedBooks.some(
+      progress => progress.libro === bookId
+    );
   };
 
-  const hasDownloaded = (bookId: string) => userData.downloadedBooks.includes(bookId);
-
-  const getBookReviews = (bookId: string) => 
-    userData.reviews.filter(r => r.bookId === bookId);
-
-  const updateProgress = (bookId: string, currentPage: number, totalPages: number) => {
-    setUserData(prev => ({
-      ...prev,
-      bookProgress: {
-        ...prev.bookProgress,
-        [bookId]: { currentPage, totalPages },
-      },
-    }));
+  // Actualizar progreso de lectura
+  const updateProgress = async (bookId: number, paginasLeidas: number) => {
+    try {
+      await analyticsService.updateProgress(bookId, paginasLeidas);
+      // Recargar biblioteca
+      const library = await analyticsService.getMyLibrary();
+      setUserData(prev => ({
+        ...prev,
+        downloadedBooks: library,
+      }));
+      return true;
+    } catch (error) {
+      console.error('Progress update error:', error);
+      throw error;
+    }
   };
 
-  const getBookProgress = (bookId: string): BookProgress | null => {
-    return userData.bookProgress[bookId] || null;
+  // Obtener progreso de un libro
+  const getBookProgress = (bookId: number) => {
+    return userData.downloadedBooks.find(
+      progress => progress.libro === bookId
+    );
+  };
+
+  // Agregar reseña
+  const addReview = async (
+    bookId: number, 
+    calificacion: number, 
+    comentario: string
+  ) => {
+    try {
+      await socialService.createReview({
+        libro: bookId,
+        calificacion,
+        comentario,
+      });
+      return true;
+    } catch (error) {
+      console.error('Review creation error:', error);
+      throw error;
+    }
+  };
+
+  // Obtener reseñas de un libro
+  const getBookReviews = async (bookId: number): Promise<Review[]> => {
+    try {
+      const reviews = await socialService.getBookReviews(bookId);
+      return reviews;
+    } catch (error) {
+      console.error('Error fetching reviews:', error);
+      return [];
+    }
   };
 
   return {
     userData,
+    login,
+    logout,
     registerDownload,
-    addReview,
     hasDownloaded,
-    getBookReviews,
     updateProgress,
     getBookProgress,
+    addReview,
+    getBookReviews,
+    refreshData: loadUserData,
   };
-};
-```
+};```
 
